@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import urllib
+import textwrap
 
 import ciso8601
 import luigi
@@ -18,7 +19,7 @@ from edx.analytics.tasks.common.pathutil import EventLogSelectionMixin, EventLog
 from edx.analytics.tasks.util.decorators import workflow_entry_point
 from edx.analytics.tasks.util import eventlog
 from edx.analytics.tasks.util.hive import WarehouseMixin, HivePartition, HiveTableTask, BareHiveTableTask, \
-    HivePartitionTask
+    HivePartitionTask, hive_database_name
 from edx.analytics.tasks.util.url import get_target_from_url, url_path_join
 from edx.analytics.tasks.util.record import Record, StringField, IntegerField
 
@@ -600,22 +601,25 @@ class VideoTimelineDataTask(VideoTableDownstreamMixin, HiveQueryTask):
             FROM video_usage
         """
 
-    @property
     def query(self):
         full_insert_query = """
+                    USE {database_name};
                     INSERT INTO TABLE {table}
                     PARTITION ({partition.query_spec})
                     {insert_query}
                 """.format(
-                    table=self.requires_local.table,
-                    partition=self.requires_local.partition,
+                    database_name=hive_database_name(),
+                    table=self.requires_local().hive_table_task.table,
+                    partition=self.requires_local().partition,
                     insert_query=self.insert_query.strip(),  # pylint: disable=no-member
                 )
-        return full_insert_query
+
+        log.info("About to execute query: " + full_insert_query)
+        return textwrap.dedent(full_insert_query)
 
     @property
     def partition(self):
-        return self.requires_local.partition  # pylint: disable=no-member
+        return self.requires_local().partition  # pylint: disable=no-member
         # return HivePartition('dt', self.interval.date_b.isoformat())  # pylint: disable=no-member
 
 # Is this appropriate?  Requires local feels like it's too low level and instead I should pass these as parameters
@@ -734,22 +738,25 @@ class VideoDataTask(VideoTableDownstreamMixin, HiveQueryTask):
                 users_at_end
         """
 
-    @property
     def query(self):
         full_insert_query = """
+                    USE {database_name};
                     INSERT INTO TABLE {table}
                     PARTITION ({partition.query_spec})
                     {insert_query}
                 """.format(
-                    table=self.requires_local.table,
-                    partition=self.requires_local.partition,
+                    database_name=hive_database_name(),
+                    table=self.requires_local().hive_table_task.table,
+                    partition=self.requires_local().partition,
                     insert_query=self.insert_query.strip(),  # pylint: disable=no-member
                 )
-        return full_insert_query
+
+        log.info("About to execute query: " + full_insert_query)
+        return textwrap.dedent(full_insert_query)
 
     @property
     def partition(self):
-        return self.requires_local.partition  # pylint: disable=no-member
+        return self.requires_local().partition  # pylint: disable=no-member
 
     def requires_local(self):
         return VideoCreatePartitionTask(
