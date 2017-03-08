@@ -11,7 +11,7 @@ import textwrap
 import ciso8601
 import luigi
 from luigi import configuration
-from luigi.hive import HiveQueryTask
+from luigi.hive import HiveQueryTask, HivePartitionTarget
 
 from edx.analytics.tasks.common.mapreduce import MapReduceJobTask, MapReduceJobTaskMixin
 from edx.analytics.tasks.common.mysql_load import MysqlInsertTask
@@ -564,34 +564,31 @@ class VideoTimelineCreatePartitionTask(VideoTableDownstreamMixin, HivePartitionT
 
     @property
     def hive_table_task(self):
-        return VideoTimelineCreateTableTask(
-            warehouse_path=self.warehouse_path,
-        )
+        return []
 
     @property
     def partition_by(self):
-        return self.hive_table_task.partition_by
+        return self.requires_local()["table_task"].partition_by
 
     @property
     def partition_value(self):
         """Use a dynamic partition value based on the date parameter."""
         return self.interval.date_b.isoformat()  # pylint: disable=no-member
 
-    # def requires(self):
-    #     # TODO This is not right, how do I turn a flat list into a dict?
-    #     require_list = super(VideoTimelineCreatePartitionTask, self).requires()
-    #
-    #     return require_list
-
     def requires_local(self):
-        return VideoUsageTableTask(
-            mapreduce_engine=self.mapreduce_engine,
-            n_reduce_tasks=self.n_reduce_tasks,
-            source=self.source,
-            interval=self.interval,
-            pattern=self.pattern,
-            warehouse_path=self.warehouse_path,
-        )
+        return {
+            "video_data_source": VideoUsageTableTask(
+                mapreduce_engine=self.mapreduce_engine,
+                n_reduce_tasks=self.n_reduce_tasks,
+                source=self.source,
+                interval=self.interval,
+                pattern=self.pattern,
+                warehouse_path=self.warehouse_path,
+            ),
+            "table_task": VideoTimelineCreateTableTask(
+                warehouse_path=self.warehouse_path,
+            )
+        }
 
 
 class VideoTimelineDataTask(VideoTableDownstreamMixin, HiveQueryTask):
@@ -616,7 +613,7 @@ class VideoTimelineDataTask(VideoTableDownstreamMixin, HiveQueryTask):
                     {insert_query};
                 """.format(
                     database_name=hive_database_name(),
-                    table=self.requires_local().hive_table_task.table,
+                    table=self.requires_local().requires_local()["table_task"].table,
                     partition=self.requires_local().partition,
                     insert_query=self.insert_query.strip(),  # pylint: disable=no-member
                 )
@@ -626,7 +623,6 @@ class VideoTimelineDataTask(VideoTableDownstreamMixin, HiveQueryTask):
     def partition(self):
         return self.requires_local().partition  # pylint: disable=no-member
 
-# Is this appropriate?  Requires local feels like it's too low level and instead I should pass these as parameters
     def requires_local(self):
         return VideoTimelineCreatePartitionTask(
             mapreduce_engine=self.mapreduce_engine,
@@ -636,6 +632,16 @@ class VideoTimelineDataTask(VideoTableDownstreamMixin, HiveQueryTask):
             pattern=self.pattern,
             warehouse_path=self.warehouse_path,
         )
+
+    # TODO I need to define what the output is here and what complete means.  This job is finishing but the downstream task cannot confirm this is complete
+    def output(self):
+        return HivePartitionTarget(
+            self.requires_local().requires_local()["table_task"].table,
+            self.requires_local().partition,
+            database=hive_database_name(),
+            fail_missing_table=True
+        )
+
 
 # TODO correct this to be the proper location.  Also how do I touch this file?
     # def output(self):
@@ -694,30 +700,31 @@ class VideoCreatePartitionTask(VideoTableDownstreamMixin, HivePartitionTask):
 
     @property
     def hive_table_task(self):
-        return VideoCreateTableTask(
-            warehouse_path=self.warehouse_path,
-        )
+        return []
 
     @property
     def partition_by(self):
-        return self.hive_table_task.partition_by
+        return self.requires_local()["table_task"].partition_by
 
     @property
     def partition_value(self):
         # Use a dynamic partition value based on the date parameter.
         return self.interval.date_b.isoformat()  # pylint: disable=no-member
 
-# TODO Transfer all these requirements into a dict object
     def requires_local(self):
-        # A bit of an abuse here as data should be for populating this table instead of an upstream table
-        return VideoUsageTableTask(
-            mapreduce_engine=self.mapreduce_engine,
-            n_reduce_tasks=self.n_reduce_tasks,
-            source=self.source,
-            interval=self.interval,
-            pattern=self.pattern,
-            warehouse_path=self.warehouse_path,
-        )
+        return {
+            "video_source_data": VideoUsageTableTask(
+                mapreduce_engine=self.mapreduce_engine,
+                n_reduce_tasks=self.n_reduce_tasks,
+                source=self.source,
+                interval=self.interval,
+                pattern=self.pattern,
+                warehouse_path=self.warehouse_path,
+            ),
+            "table_task": VideoCreateTableTask(
+                warehouse_path=self.warehouse_path,
+            )
+        }
 
 
 class VideoDataTask(VideoTableDownstreamMixin, HiveQueryTask):
@@ -754,7 +761,7 @@ class VideoDataTask(VideoTableDownstreamMixin, HiveQueryTask):
                     {insert_query};
                 """.format(
                     database_name=hive_database_name(),
-                    table=self.requires_local().hive_table_task.table,
+                    table=self.requires_local().requires_local()["table_task"].table,
                     partition=self.requires_local().partition,
                     insert_query=self.insert_query.strip(),  # pylint: disable=no-member
                 )
@@ -773,6 +780,16 @@ class VideoDataTask(VideoTableDownstreamMixin, HiveQueryTask):
             pattern=self.pattern,
             warehouse_path=self.warehouse_path,
         )
+
+    # TODO I need to define what the output is here and what complete means.  This job is finishing but the downstream task cannot confirm this is complete
+    def output(self):
+        return HivePartitionTarget(
+            self.requires_local().requires_local()["table_task"].table,
+            self.requires_local().partition,
+            database=hive_database_name(),
+            fail_missing_table=True
+        )
+
 
 
 class InsertToMysqlVideoTask(VideoTableDownstreamMixin, MysqlInsertTask):
